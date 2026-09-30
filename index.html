@@ -357,6 +357,26 @@ input[type=range]{
   .ebar-pct{font-size:1.1rem;}
   .ctrl-value{font-size:1rem;}
 }
+
+/* ===== CHAVEAMENTO / DEMONSTRAÇÃO ===== */
+.ebar-track{position:relative;overflow:visible;margin-bottom:.9rem}
+.ghost{position:absolute;left:0;top:0;height:100%;border-radius:100px;background:rgba(245,166,35,.25);transition:width .5s}
+.ebar-fill{position:relative}
+.tick{position:absolute;left:40%;top:-4px;bottom:-4px;width:2px;background:#fff;border-radius:2px}
+.tick::after{content:'40%';position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:.6rem;color:#fff;margin-top:1px}
+#sw-panel{width:100%;max-width:1200px;display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem}
+.card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:1rem 1.2rem}
+.card h3{font:700 .72rem Syne,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:rgba(240,237,230,.5);margin-bottom:.6rem}
+#sw-svg,#chart{width:100%;display:block}
+#chart{height:150px}
+#sw-svg text{font:700 13px Syne,sans-serif}
+.w{fill:none;stroke:#3a4a3f;stroke-width:3}
+.w.on{stroke-dasharray:7 5;animation:fl .6s linear infinite}
+@keyframes fl{to{stroke-dashoffset:-24}}
+#sw-state{font-size:.78rem;margin-top:.5rem;min-height:3.2em;line-height:1.4}
+#swlog{font-size:.72rem;color:rgba(240,237,230,.65);margin-top:.4rem;list-style:none;min-height:2.6em}
+@media(max-width:700px){#sw-panel{grid-template-columns:1fr;margin:.3rem .6rem;gap:.5rem;flex-shrink:0}}
+@media(max-width:900px) and (orientation:landscape) and (max-height:500px){#sw-panel{grid-column:1/-1;margin:0}}
 </style>
 </head>
 <body>
@@ -381,7 +401,7 @@ input[type=range]{
       <span class="ebar-name">☀️ Painéis Solares</span>
       <span class="ebar-pct" id="pct-s" style="color:#F5A623">0%</span>
     </div>
-    <div class="ebar-track"><div class="ebar-fill fill-solar" id="fill-s" style="width:0%"></div></div>
+    <div class="ebar-track"><div class="ghost" id="ghost-s"></div><div class="ebar-fill fill-solar" id="fill-s" style="width:0%"></div><div class="tick"></div></div>
     <div class="ebar-status" id="status-s">Aguardando nascer do sol...</div>
   </div>
   <div class="ebar">
@@ -392,6 +412,27 @@ input[type=range]{
     <div class="ebar-track"><div class="ebar-fill fill-bio" id="fill-b" style="width:100%"></div></div>
     <div class="ebar-status" id="status-b">Em operação noturna</div>
   </div>
+</div>
+
+<div id="sw-panel">
+<div class="card"><h3>Chave de transferência intertravada</h3>
+<svg id="sw-svg" viewBox="0 0 600 150">
+<path class="w" d="M150 42H250M150 108H250" style="stroke:#55655a"/>
+<rect x="10" y="20" width="140" height="44" rx="10" fill="#3a2c0e" stroke="#F5A623"/><text x="80" y="47" text-anchor="middle" fill="#F5A623">☀️ Solar</text>
+<path id="w-s" class="w" d="M290 42H380V75H450"/>
+<line id="lv-s" x1="250" y1="42" x2="290" y2="42" stroke-width="5" stroke-linecap="round" style="transform-origin:250px 42px;transition:transform .35s,stroke .2s"/>
+<circle cx="250" cy="42" r="4" fill="#ddd"/><circle cx="290" cy="42" r="4" fill="#ddd"/>
+<rect x="10" y="86" width="140" height="44" rx="10" fill="#1b3310" stroke="#8BC34A"/><text x="80" y="113" text-anchor="middle" fill="#8BC34A">🌿 Biogás</text>
+<path id="w-b" class="w" d="M290 108H380V75H450"/>
+<line id="lv-b" x1="250" y1="108" x2="290" y2="108" stroke-width="5" stroke-linecap="round" style="transform-origin:250px 108px;transition:transform .35s,stroke .2s"/>
+<circle cx="250" cy="108" r="4" fill="#ddd"/><circle cx="290" cy="108" r="4" fill="#ddd"/>
+<path d="M270 56V94" stroke="#aaa" stroke-dasharray="3 3" fill="none"/><text x="270" y="80" text-anchor="middle" style="font-size:14px">🔒</text>
+<text x="284" y="80" fill="#aaa" style="font-size:9px;font-weight:600">intertrav.</text>
+<rect id="ld" x="450" y="50" width="146" height="50" rx="10" fill="#173a24" stroke="#fff" stroke-opacity=".3"/>
+<text x="523" y="70" text-anchor="middle" fill="#fff">🏭 Fazenda</text><text id="ld-t" x="523" y="88" text-anchor="middle" fill="#ddd" style="font-size:9.5px">—</text>
+</svg>
+<div id="sw-state"></div></div>
+<div class="card"><h3>Capacidade solar × limiar de 40%</h3><canvas id="chart"></canvas><ul id="swlog"></ul></div>
 </div>
 
 <div id="controls">
@@ -479,18 +520,43 @@ resetBtn.addEventListener('click', () => {
   hora = 0; horaSlider.value = 0;
 });
 
-// ======== ENERGIA ========
-function solarPct(h) {
+// ======== ENERGIA — CHAVEAMENTO EXCLUSIVO (INTERTRAVADO) ========
+// REGRA: solar e biogás NUNCA operam juntos (curto-circuito). Só uma chave fica fechada.
+// Troca: quando a fonte em operação cai abaixo de 40% da capacidade, abre-se a chave dela,
+// passa-se por um "tempo morto" (as DUAS abertas) e só então fecha-se a chave da outra.
+const SWITCH_THRESHOLD = 40; // %
+const T_OPEN = 0.8, T_DEAD = 1.8, T_DONE = 2.6; // segundos reais de cada fase
+let activeSource = 'biogas'; // fonte com a chave FECHADA (null = ambas abertas)
+let xfer = null, switchEvent = null; const swLog = [];
+const fmt = h => String(Math.floor(h)).padStart(2,'0') + ':' + String(Math.floor((h % 1) * 60)).padStart(2,'0');
+
+function solarCapacity(h) {
   if (h < 5.5 || h > 19) return 0;
-  const peak = 12.5;
-  const dist = Math.abs(h - peak);
-  return Math.max(0, Math.round(100 * Math.exp(-Math.pow(dist, 1.9) / 18)));
+  return Math.max(0, Math.round(100 * Math.exp(-Math.pow(Math.abs(h - 12.5), 1.9) / 18)));
 }
-function biogasPct(sol) {
-  if (sol >= 90) return 5;
-  if (sol === 0) return 100;
-  return Math.round(100 - sol * 0.6);
+const wantSource = h => solarCapacity(h) >= SWITCH_THRESHOLD ? 'solar' : 'biogas';
+
+function updateActiveSource(h) {
+  if (xfer) return;
+  const want = wantSource(h);
+  if (activeSource === want) return;
+  const from = activeSource, sc = solarCapacity(h);
+  xfer = { from, to: want, t: 0, sc };
+  switchEvent = { from, to: want, hora: h, age: 0 };
+  swLog.unshift(`<b>${fmt(h)}</b> ` + (from === 'solar'
+    ? `☀️ solar caiu a ${sc}% (&lt;40%) → abre solar · 🌿 biogás assume`
+    : `☀️ solar chegou a ${sc}% (≥40%) → abre biogás · ☀️ solar assume`));
+  if (swLog.length > 4) swLog.pop();
 }
+function stepXfer(dt) {
+  if (!xfer) return;
+  xfer.t += dt;
+  activeSource = xfer.t < T_OPEN ? xfer.from : xfer.t < T_DEAD ? null : xfer.to;
+  if (xfer.t >= T_DONE) xfer = null;
+}
+const ramp = () => (xfer && activeSource === xfer.to) ? Math.min(1, (xfer.t - T_DEAD) / (T_DONE - T_DEAD)) : 1;
+function getSolarPct(h) { return activeSource === 'solar' ? Math.round(solarCapacity(h) * ramp()) : 0; }
+function getBioPct() { return activeSource === 'biogas' ? Math.round(100 * ramp()) : 0; }
 
 // ======== COR DO CÉU ========
 const SKY = [
@@ -690,8 +756,10 @@ function draw() {
   }
 
   // --- FLUXO SOLAR (linhas tracejadas do sol até os painéis) ---
-  const sol = solarPct(hora);
-  if (sol > 5 && isDay) {
+  // Somente desenha fluxo se solar for a fonte ativa
+  const sol = getSolarPct(hora);
+  const solCap = solarCapacity(hora); // capacidade bruta para exibição
+  if (sol > 5 && isDay && activeSource === 'solar') {
     const prog = (hora - 6) / 12;
     const solX = W * (0.08 + prog * 0.84);
     const solY2 = H * (0.72 - Math.sin(prog * Math.PI) * 0.62);
@@ -728,8 +796,8 @@ function draw() {
   }
 
   // --- BIOGÁS — bolhas e fluxo ---
-  const bio = biogasPct(sol);
-  const bioActive = bio > 15;
+  const bio = getBioPct(hora);
+  const bioActive = bio > 15 && activeSource === 'biogas';
   stepParticles(bio/100);
 
   // biodigestor está na imagem da esquerda (~25% x)
@@ -766,6 +834,63 @@ function draw() {
     }
   }
 
+  // --- INDICADOR DE CAPACIDADE SOLAR (quando solar não está ativo mas tem irradiação) ---
+  if (activeSource !== 'solar' && solCap > 0 && isDay) {
+    const panelX = W * 0.72, panelY = H * 0.74;
+    // Mostrar capacidade disponível com linha tracejada apagada
+    ctx.save();
+    ctx.setLineDash([5*sc, 7*sc]);
+    ctx.globalAlpha = 0.25;
+    ctx.strokeStyle = `rgba(255,210,60,0.6)`;
+    ctx.lineWidth = 1.5*sc;
+    const prog2 = (hora - 6) / 12;
+    const solX2 = W * (0.08 + prog2 * 0.84);
+    const solY2b = H * (0.72 - Math.sin(prog2 * Math.PI) * 0.62);
+    ctx.beginPath();
+    ctx.moveTo(solX2, solY2b);
+    ctx.quadraticCurveTo((solX2+panelX)/2, H*0.2, panelX, panelY);
+    ctx.stroke();
+    ctx.restore();
+
+    // Label capacidade disponível
+    ctx.globalAlpha = 0.5;
+    ctx.font = `600 ${10*sc}px Inter`;
+    ctx.fillStyle = `rgba(255,200,60,0.8)`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`⚠️ ${solCap}% disponível (desligado)`, panelX, panelY + 18*sc);
+    ctx.globalAlpha = 1;
+  }
+
+  // --- OVERLAY ANIMADO DE CHAVEAMENTO NO CANVAS ---
+  if (switchEvent && switchEvent.age < 2.5) {
+    const t = switchEvent.age;
+    const alpha = t < 0.2 ? t/0.2 : t > 2 ? 1-(t-2)/0.5 : 1;
+    // Flash de borda
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.18;
+    const flashColor = switchEvent.to === 'solar' ? 'rgba(245,166,35,1)' : 'rgba(80,200,60,1)';
+    ctx.strokeStyle = flashColor;
+    ctx.lineWidth = 12*sc;
+    ctx.strokeRect(6*sc, 6*sc, W-12*sc, H-12*sc);
+    ctx.restore();
+
+    // Seta de chaveamento no centro
+    const cx = W*0.5, cy = H*0.52;
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.95;
+    ctx.font = `800 ${18*sc}px Syne,sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = switchEvent.to === 'solar' ? '#F5A623' : '#8BC34A';
+    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+    ctx.shadowBlur = 16;
+    const label = activeSource === null ? '⛓ INTERTRAVAMENTO — ambas as chaves abertas' : switchEvent.to === 'solar'
+      ? `⚡ Chaveado para Solar  (≥${SWITCH_THRESHOLD}%)`
+      : `⚡ Chaveado para Biogás  (<${SWITCH_THRESHOLD}%)`;
+    ctx.fillText(label, cx, cy);
+    ctx.restore();
+  }
+
   // --- HUD HORA ---
   const hh = String(Math.floor(hora)).padStart(2,'0');
   const mm = String(Math.floor((hora % 1) * 60)).padStart(2,'0');
@@ -800,9 +925,11 @@ function drawCloud(ctx, cx, cy, sc, a) {
 
 // ======== UI UPDATE ========
 function updateUI() {
-  const sol = solarPct(hora);
-  const bio = biogasPct(sol);
+  const solCap = solarCapacity(hora); // capacidade bruta do solar (independente de quem está ativo)
+  const sol = getSolarPct(hora);      // geração real: 0 se solar inativo
+  const bio = getBioPct(hora);        // geração real: 0 se biogás inativo
 
+  // Barras mostram geração real (só a fonte ativa gera)
   document.getElementById('pct-s').textContent = sol + '%';
   document.getElementById('pct-b').textContent = bio + '%';
   document.getElementById('fill-s').style.width = sol + '%';
@@ -816,54 +943,149 @@ function updateUI() {
   const sStat = document.getElementById('status-s');
   const bStat = document.getElementById('status-b');
 
-  if (hora < 5.5 || hora > 19) {
-    sStat.textContent = 'Sem irradiação solar — painéis inativos';
-  } else if (sol < 30) {
-    sStat.textContent = 'Irradiação baixa — geração reduzida';
-  } else if (sol < 70) {
-    sStat.textContent = 'Geração parcial — compartilhando carga';
+  // Status solar
+  if (activeSource === 'solar') {
+    if (solCap < SWITCH_THRESHOLD + 10) sStat.textContent = '⚠️ Perto do limiar de 40% — vai chavear p/ biogás';
+    else if (solCap < 70) sStat.textContent = '✅ Em operação — geração parcial';
+    else sStat.textContent = '✅ Em operação plena — irradiação máxima';
   } else {
-    sStat.textContent = 'Irradiação plena — geração máxima';
+    // Solar está desligado (biogás ativo)
+    if (solCap === 0) sStat.textContent = '🔴 Desligado — sem irradiação solar (noite)';
+    else if (solCap < SWITCH_THRESHOLD) sStat.textContent = `🔴 Desligado — capacidade ${solCap}% (limiar: ${SWITCH_THRESHOLD}%)`;
+    else sStat.textContent = `🟡 Standby — capacidade ${solCap}% (aguardando chaveamento)`;
   }
 
-  if (bio < 10) {
-    bStat.textContent = 'Standby — energia solar suficiente';
-  } else if (bio < 50) {
-    bStat.textContent = 'Complementando a energia solar';
-  } else if (bio < 90) {
-    bStat.textContent = 'Assumindo maior parte da carga';
+  // Status biogás
+  if (activeSource === 'biogas') {
+    bStat.textContent = '✅ Em operação — abastecendo a fazenda';
   } else {
-    bStat.textContent = 'Em operação plena — abastecendo a fazenda';
+    bStat.textContent = activeSource === null ? '⛓ Chave aberta — tempo morto' : '🔴 Desligado — solar assumiu a carga';
   }
 
+  // Badge modo central
   const modEl = document.getElementById('modo-txt');
-  if (sol >= 65) {
-    modEl.textContent = '☀️ Modo Solar';
+  if (activeSource === 'solar') {
+    modEl.textContent = '☀️ Geração Solar Ativa';
     modEl.style.cssText = 'background:rgba(245,166,35,0.18);border:1px solid rgba(245,166,35,0.45);color:#F5A623;padding:0.45em 1.6em;border-radius:100px;display:inline-block;font-family:Syne,sans-serif;font-size:1rem;font-weight:700;transition:all 0.4s';
-  } else if (sol > 10) {
-    modEl.textContent = '⚡ Modo Híbrido — Solar + Biogás';
-    modEl.style.cssText = 'background:rgba(200,140,40,0.18);border:1px solid rgba(200,140,40,0.45);color:#E8A040;padding:0.45em 1.6em;border-radius:100px;display:inline-block;font-family:Syne,sans-serif;font-size:1rem;font-weight:700;transition:all 0.4s';
   } else {
-    modEl.textContent = '🌿 Modo Biogás — Energia Noturna';
+    modEl.textContent = '🌿 Geração Biogás Ativa';
     modEl.style.cssText = 'background:rgba(80,180,60,0.15);border:1px solid rgba(80,180,60,0.4);color:#8BC34A;padding:0.45em 1.6em;border-radius:100px;display:inline-block;font-family:Syne,sans-serif;font-size:1rem;font-weight:700;transition:all 0.4s';
+  }
+
+  document.getElementById('ghost-s').style.width = solCap + '%';
+  if (activeSource === null) {
+    modEl.textContent = '⛓ Transferência — as duas chaves abertas';
+    modEl.style.cssText = 'background:rgba(224,82,82,0.16);border:1px solid rgba(224,82,82,0.5);color:#ff8a8a;padding:0.45em 1.6em;border-radius:100px;display:inline-block;font-family:Syne,sans-serif;font-size:1rem;font-weight:700;transition:all 0.4s';
+  }
+  showSwitchNotification();
+}
+
+// Notificação visual de chaveamento
+function showSwitchNotification() {
+  let notif = document.getElementById('switch-notif');
+  if (!notif) {
+    notif = document.createElement('div');
+    notif.id = 'switch-notif';
+    notif.style.cssText = `
+      position:fixed;top:18px;left:50%;transform:translateX(-50%);
+      z-index:999;pointer-events:none;
+      font-family:Syne,sans-serif;font-size:0.88rem;font-weight:700;
+      padding:0.55em 1.5em;border-radius:100px;
+      backdrop-filter:blur(10px);
+      transition:opacity 0.4s, transform 0.4s;
+      white-space:nowrap;
+    `;
+    document.body.appendChild(notif);
+  }
+
+  if (switchEvent && switchEvent.age < 3.5) {
+    const t = switchEvent.age;
+    const alpha = t < 0.3 ? t/0.3 : t > 3 ? 1-(t-3)/0.5 : 1;
+    const translateY = t < 0.3 ? `-${(1-t/0.3)*16}px` : '0px';
+
+    if (switchEvent.to === 'solar') {
+      notif.textContent = `⚡ CHAVEAMENTO — Biogás → Solar (capacidade solar ≥ ${SWITCH_THRESHOLD}%)`;
+      notif.style.background = 'rgba(245,166,35,0.92)';
+      notif.style.color = '#1a0e00';
+      notif.style.border = '1.5px solid rgba(255,200,60,0.7)';
+    } else {
+      notif.textContent = `⚡ CHAVEAMENTO — Solar → Biogás (capacidade solar < ${SWITCH_THRESHOLD}%)`;
+      notif.style.background = 'rgba(80,180,60,0.92)';
+      notif.style.color = '#0a1a06';
+      notif.style.border = '1.5px solid rgba(100,220,80,0.7)';
+    }
+    notif.style.opacity = alpha;
+    notif.style.transform = `translateX(-50%) translateY(${translateY})`;
+    notif.style.display = 'block';
+  } else {
+    notif.style.opacity = 0;
   }
 }
 
-// ======== LOOP ========
-function loop(ts) {
-  if (playing) {
-    if (lastTs !== null) {
-      const dt = (ts - lastTs) / 1000; // segundos reais
-      // 1× = 1 hora por 8 segundos reais
-      hora = (hora + dt * speed * (1/8)) % 24;
-    }
-    lastTs = ts;
-  } else {
-    lastTs = null;
-  }
+// ======== GRÁFICO: CAPACIDADE SOLAR × LIMIAR ========
+const $ = id => document.getElementById(id);
+const cc = $('chart'), g2 = cc.getContext('2d');
+const XING = [];
+for (let h = 0.01; h < 24; h += 0.01) if ((solarCapacity(h) >= SWITCH_THRESHOLD) !== (solarCapacity(h - 0.01) >= SWITCH_THRESHOLD)) XING.push(h);
+function drawChart() {
+  const dpr = window.devicePixelRatio || 1, w = cc.clientWidth, h = cc.clientHeight;
+  if (!w) return;
+  if (cc.width !== Math.round(w * dpr)) { cc.width = Math.round(w * dpr); cc.height = Math.round(h * dpr); }
+  g2.setTransform(dpr, 0, 0, dpr, 0, 0); g2.clearRect(0, 0, w, h);
+  const L = 28, R = 8, T = 12, B = 20, pw = w - L - R, ph = h - T - B;
+  const X = t => L + t / 24 * pw, Y = p => T + ph * (1 - p / 100), [a, b] = XING;
+  g2.fillStyle = 'rgba(139,195,74,.13)'; g2.fillRect(X(0), T, X(a) - X(0), ph); g2.fillRect(X(b), T, X(24) - X(b), ph);
+  g2.fillStyle = 'rgba(245,166,35,.16)'; g2.fillRect(X(a), T, X(b) - X(a), ph);
+  g2.font = '600 10px Inter,sans-serif'; g2.textAlign = 'center';
+  g2.fillStyle = 'rgba(139,195,74,.9)'; g2.fillText('🌿 BIOGÁS', X(a / 2), Y(8)); g2.fillText('🌿 BIOGÁS', X((b + 24) / 2), Y(8));
+  g2.fillStyle = 'rgba(245,166,35,.95)'; g2.fillText('☀️ SOLAR', X((a + b) / 2), Y(8));
+  g2.beginPath(); for (let t = 0; t <= 24; t += 0.1) g2[t ? 'lineTo' : 'moveTo'](X(t), Y(solarCapacity(t)));
+  g2.strokeStyle = '#FFD580'; g2.lineWidth = 2; g2.stroke();
+  g2.setLineDash([5, 4]); g2.strokeStyle = '#fff'; g2.lineWidth = 1.2; g2.beginPath(); g2.moveTo(L, Y(40)); g2.lineTo(L + pw, Y(40)); g2.stroke(); g2.setLineDash([]);
+  g2.fillStyle = '#fff'; g2.textAlign = 'left'; g2.fillText('limiar 40%', L + 4, Y(40) - 4);
+  g2.fillStyle = 'rgba(240,237,230,.5)'; g2.textAlign = 'center';
+  for (let t = 0; t <= 24; t += 6) g2.fillText(t + 'h', X(t), h - 6);
+  g2.textAlign = 'right'; [0, 40, 100].forEach(p => g2.fillText(p, L - 4, Y(p) + 3));
+  XING.forEach((t, i) => { g2.beginPath(); g2.arc(X(t), Y(40), 4, 0, 7); g2.fillStyle = i ? '#8BC34A' : '#F5A623'; g2.fill();
+    g2.fillStyle = '#fff'; g2.textAlign = 'center'; g2.fillText(fmt(t), X(t), Y(40) + 16); });
+  const cx = X(hora);
+  g2.strokeStyle = activeSource === 'solar' ? '#F5A623' : activeSource === 'biogas' ? '#8BC34A' : '#e05252'; g2.lineWidth = 2;
+  g2.beginPath(); g2.moveTo(cx, T); g2.lineTo(cx, T + ph); g2.stroke();
+  g2.beginPath(); g2.arc(cx, Y(solarCapacity(hora)), 4.5, 0, 7); g2.fillStyle = '#fff'; g2.fill();
+}
 
-  draw();
-  updateUI();
+// ======== PAINEL DA CHAVE DE TRANSFERÊNCIA ========
+function updateSwitchPanel() {
+  const cs = activeSource === 'solar', cb = activeSource === 'biogas';
+  [['s', cs, '#F5A623'], ['b', cb, '#8BC34A']].forEach(([k, on, c]) => {
+    const lv = $('lv-' + k), w = $('w-' + k);
+    lv.style.transform = on ? 'rotate(0deg)' : 'rotate(-30deg)';
+    lv.style.stroke = on ? c : '#e05252';
+    w.style.stroke = on ? c : '#3a4a3f'; w.classList.toggle('on', on);
+  });
+  const nome = cs ? 'Solar' : cb ? 'Biogás' : null;
+  $('ld').style.fill = nome ? '#173a24' : '#4a1f1f';
+  $('ld-t').textContent = nome ? 'alimentada por ' + nome : 'SEM ALIMENTAÇÃO (tempo morto)';
+  const sol = solarCapacity(hora); let msg;
+  if (xfer) {
+    const N = x => x === 'solar' ? '☀️ Solar' : '🌿 Biogás';
+    msg = xfer.t < T_OPEN ? `⚠️ ${xfer.from === 'solar' ? 'Solar caiu para ' + xfer.sc + '% (&lt; 40%)' : 'Solar chegou a ' + xfer.sc + '% (≥ 40%)'} — abrindo a chave ${N(xfer.from)}…`
+        : xfer.t < T_DEAD ? '⛓ <b>INTERTRAVAMENTO</b>: as duas chaves ABERTAS. Nunca fecham juntas → sem curto-circuito.'
+        : `🔌 Fechando a chave ${N(xfer.to)} — só agora a nova fonte entra na carga.`;
+  } else msg = `Chave ${cs ? '☀️ Solar' : '🌿 Biogás'} <b>FECHADA</b> · chave ${cs ? '🌿 Biogás' : '☀️ Solar'} <b>ABERTA</b><br>Solar disponível: ${sol}% ${sol >= 40 ? '(≥ 40%)' : '(&lt; 40%)'}`;
+  $('sw-state').innerHTML = msg;
+  $('swlog').innerHTML = swLog.map(e => '<li>' + e + '</li>').join('');
+}
+
+// ======== LOOP ========
+let lastReal = null;
+function loop(ts) {
+  const dt = lastReal === null ? 0 : Math.min((ts - lastReal) / 1000, 0.1); lastReal = ts;
+  if (playing) hora = (hora + dt * speed / 8 * (xfer ? 0.12 : 1)) % 24; // câmera lenta durante a transferência
+  updateActiveSource(hora);
+  stepXfer(dt);
+  if (switchEvent) { switchEvent.age += dt; if (switchEvent.age > 4) switchEvent = null; }
+  draw(); updateUI(); drawChart(); updateSwitchPanel();
   requestAnimationFrame(loop);
 }
 
